@@ -1,3 +1,12 @@
+#include <Adafruit_LSM303.h>
+#include <Adafruit_LSM303_U.h>
+
+#include <Adafruit_L3GD20.h>
+#include <Adafruit_L3GD20_U.h>
+#include <Adafruit_10DOF.h>
+
+#include <Ticker.h>
+
 int LED_BUILTIN = 2;
 byte Sync0[1];
 byte Sync1[1];
@@ -8,8 +17,30 @@ int received_length = 0;
 byte chksm = 0;
 int good_packet = 0;
 int packet_count = 0;
+int rpm = 0;
 
 HardwareSerial & lidar = Serial2;
+
+// Create accelerometer and magnetometer identifiers
+Adafruit_LSM303_Accel_Unified accel = Adafruit_LSM303_Accel_Unified(54321);
+Adafruit_LSM303_Mag_Unified mag = Adafruit_LSM303_Mag_Unified(12345);
+sensors_event_t accel_event;
+sensors_event_t mag_event;
+sensors_vec_t   orientation;
+Adafruit_10DOF dof = Adafruit_10DOF();
+
+Ticker accessOrientation;
+
+// function to get the orientation of the IMU
+void getOrientation(){
+  accel.getEvent(&accel_event);
+  mag.getEvent(&mag_event);
+  if(dof.fusionGetOrientation(&accel_event, &mag_event, &orientation)){
+    Serial.println("Got orientation");  
+  };
+  
+
+}
 
 void setup() {
 
@@ -18,10 +49,16 @@ void setup() {
   lidar.begin(230400);
   lidar.write('b');
 
+  // Begin connections to accelerometer & magnetometer and attach 50ms interrupt to callback
+  accel.begin();
+  mag.begin();
+  accessOrientation.attach_ms(50, getOrientation);
+
 }
 
 
 void loop() {
+
 
   digitalWrite(LED_BUILTIN, HIGH);
 
@@ -47,6 +84,7 @@ void loop() {
   Sync[0] = Sync0[0];
   Sync[1] = Sync1[0];
 
+  // create new array containing full 2520 packets called lidarData, combing Sync & remainingData
   memcpy(lidarData, Sync, sizeof(Sync));
   memcpy(lidarData+sizeof(Sync), remainingData, sizeof(remainingData));
 
@@ -60,26 +98,19 @@ void loop() {
     }
 
     chksm = 0xFF - chksm;
-
-    if(i == 0){
-      if(chksm == lidarData[41]){
-        good_packet = good_packet + 1;
-      }
-    } else {
-      if(chksm == lidarData[i+40]){
-        good_packet = good_packet + 1;
-        
-      }
+    
+    if(chksm == lidarData[i+40]){
+      good_packet = good_packet + 1;
     }
-
+    
   }
 
   //if received 60 good packets of data from LiDAR, calculate angles etc
   if(good_packet == 60){
 
     packet_count = packet_count + 1;
-    Serial.print("Received good full packet");
-    Serial.println(packet_count);
+    Serial.print("Received good full packet: ");
+    Serial.print(packet_count);
 
     // now have full data packet, loop over each 42 byte packet
     for(int i = 0; i < 2520; i = i + 42){
@@ -91,6 +122,11 @@ void loop() {
         //Serial.println(lidar_angle);
       }
     }
+
+    // calculate rpm
+    rpm = ((lidarData[3] << 8) + lidarData[2]) / 10;
+    Serial.print("    RPM: ");
+    Serial.println(rpm);
   }
   
    
