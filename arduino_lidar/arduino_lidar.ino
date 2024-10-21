@@ -110,7 +110,7 @@ void setup() {
   set_microros_serial_transports(Serial);
   delay(2000);
 
-  const int timeout_ms = 500;    // timeout for pinging Agent
+  const int timeout_ms = 2000;    // timeout for pinging Agent & syncing time
   const uint8_t attempts = 5;    // Number of attempts
 
   // Ping the agent
@@ -120,9 +120,6 @@ void setup() {
   while(ping_result == RMW_RET_ERROR) {
     ping_result = rmw_uros_ping_agent(timeout_ms, attempts);
   }
-
-  // Synchronize time with the agent
-  rmw_uros_sync_session(timeout_ms);
 
 
   allocator = rcl_get_default_allocator();
@@ -160,8 +157,15 @@ void setup() {
   RCCHECK(rclc_executor_add_timer(&executor, &timer));
 
   msg.data = 0;
+
+   // Synchronize time with the agent
+  rmw_uros_sync_session(timeout_ms);
+  if(!rmw_uros_epoch_synchronized()){
+    error_loop();
+  }
   
   int64_t time_ns = rmw_uros_epoch_nanos();
+  int64_t time_ms = rmw_uros_epoch_millis();
 
   // Assigning dynamic memory to the frame_id char sequence
   laserScan.header.frame_id.capacity = 20;
@@ -172,6 +176,7 @@ void setup() {
   strcpy(laserScan.header.frame_id.data, "laser_frame");
   laserScan.header.frame_id.size = strlen(laserScan.header.frame_id.data);
   laserScan.header.stamp.nanosec = time_ns;
+  laserScan.header.stamp.sec = time_ms / 1000.0;
   laserScan.angle_min = 0;
   laserScan.angle_max = 2*PI;   // in rads
   laserScan.angle_increment = 1.0 * (PI/180.0); // in rads
@@ -194,7 +199,9 @@ void loop() {
   digitalWrite(LED_BUILTIN, HIGH);
 
   int64_t time_ns = rmw_uros_epoch_nanos();
+  int64_t time_ms = rmw_uros_epoch_millis();
   laserScan.header.stamp.nanosec = time_ns;
+  laserScan.header.stamp.sec = time_ms / 1000;
 
   digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
 
