@@ -5,6 +5,8 @@
 #include <Adafruit_L3GD20_U.h>
 #include <Adafruit_10DOF.h>
 
+#include <Adafruit_SSD1306.h>
+
 #include <Ticker.h>
 #include <Arduino.h>
 
@@ -16,6 +18,11 @@
 
 #include <std_msgs/msg/int32.h>
 #include <sensor_msgs/msg/laser_scan.h>
+
+#define DISP_I2C_ADDR            (0x78 >> 1)
+#define SCREEN_WIDTH 128 // OLED display width, in pixels
+#define SCREEN_HEIGHT 64 // OLED display height, in pixels
+#define OLED_RESET     -1 // Reset pin # (or -1 if sharing Arduino reset pin)
 
 int LED_BUILTIN = 2;
 byte Sync0[1];
@@ -32,6 +39,9 @@ int rpm = 0;
 #define DO_CHKSM 1
 
 HardwareSerial & lidar = Serial2;
+
+//OLED Display
+Adafruit_SSD1306 oled_display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 // Create accelerometer and magnetometer identifiers
 Adafruit_LSM303_Accel_Unified accel = Adafruit_LSM303_Accel_Unified(54321);
@@ -57,6 +67,9 @@ rcl_allocator_t allocator;
 //rcl_allocator_t laserAllocator;
 rcl_node_t node;
 rcl_timer_t timer;
+
+const int timeout_ms = 2000;    // timeout for pinging Agent & syncing time
+const uint8_t attempts = 1;    // Number of attempts
 
 
 
@@ -99,19 +112,27 @@ void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, LOW);
   lidar.begin(230400);
-    
+
+  // Start OLED display
+  oled_display.begin(SSD1306_SWITCHCAPVCC, DISP_I2C_ADDR);
+  oled_display.clearDisplay();
+  oled_display.setTextSize(1);      // Normal 1:1 pixel scale
+  oled_display.setTextColor(WHITE); // Draw white text
+  oled_display.setCursor(0, 0);     // Start at top-left corner
+  //oled_display.cp437(true);         // Use full 256 char 'Code Page 437' font
+ 
+  oled_display.print("ROS: Waiting on Agent Start");
+  oled_display.display();    
 
   // Begin connections to accelerometer & magnetometer and attach 50ms interrupt to callback
   accel.begin();
   mag.begin();
   accessOrientation.attach_ms(50, getOrientation);
 
+
   // Configure the microROS transportation type
   set_microros_serial_transports(Serial);
   delay(2000);
-
-  const int timeout_ms = 2000;    // timeout for pinging Agent & syncing time
-  const uint8_t attempts = 5;    // Number of attempts
 
   // Ping the agent
   rmw_ret_t ping_result = rmw_uros_ping_agent(timeout_ms, attempts);
@@ -120,6 +141,12 @@ void setup() {
   while(ping_result == RMW_RET_ERROR) {
     ping_result = rmw_uros_ping_agent(timeout_ms, attempts);
   }
+
+  oled_display.clearDisplay();
+  oled_display.setCursor(0, 0);
+  oled_display.print("ROS: Connected");
+  oled_display.display();    
+
 
 
   allocator = rcl_get_default_allocator();
@@ -158,12 +185,13 @@ void setup() {
 
   msg.data = 0;
 
-   // Synchronize time with the agent
+  // Synchronize time with the agent
   rmw_uros_sync_session(timeout_ms);
   if(!rmw_uros_epoch_synchronized()){
     error_loop();
   }
-  
+
+
   int64_t time_ns = rmw_uros_epoch_nanos();
   int64_t time_ms = rmw_uros_epoch_millis();
 
@@ -196,7 +224,24 @@ void setup() {
 void loop() {
 
 
-  digitalWrite(LED_BUILTIN, HIGH);
+  rmw_ret_t ping_result = rmw_uros_ping_agent(timeout_ms, attempts);
+
+  // Keep pinging until connected
+  while(ping_result == RMW_RET_ERROR) {
+    oled_display.clearDisplay();
+    oled_display.setCursor(0, 0);     
+    oled_display.print("ROS: Disconnected");
+    oled_display.display();
+    lidar.write('e');
+    ping_result = rmw_uros_ping_agent(timeout_ms, attempts);
+    delay(500);
+  }
+
+  lidar.write('b');
+  oled_display.setCursor(0, 0);
+  oled_display.print("ROS: Connected");
+  oled_display.display();   
+
 
   int64_t time_ns = rmw_uros_epoch_nanos();
   int64_t time_ms = rmw_uros_epoch_millis();
@@ -293,7 +338,7 @@ void loop() {
         
       }
     }
-    digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+    
 
     // calculate rpm
     //rpm = ((lidarData[3] << 8) + lidarData[2]) / 10;
